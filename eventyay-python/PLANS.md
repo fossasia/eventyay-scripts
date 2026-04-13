@@ -1,141 +1,372 @@
-# Sold Ticket Migration Plan
+# add front_page text and images
 
-## Goal
+## getting info from old event
 
-Add sold ticket/product migration after event migration, once the new-system product endpoints are available.
-
-## Source Data In The Old System
-
-- Use `/v1/events/{event_id}/tickets` for the ticket catalog and ticket metadata.
-- Use `/v1/events/{event_id}/attendees?page[size]=3000&include=order,ticket` as the source of sold ticket rows.
-- Use `/v1/events/{event_id}/order-statistics` as a validation endpoint for aggregate counts.
-
-## Aggregation Rules
-
-- Count sold products from attendee rows, not from the ticket catalog alone.
-- Only count attendees whose included order has `status == "completed"`.
-- Group the completed attendees by `ticket_id`.
-- Enrich each grouped ticket with the included ticket data or the event ticket catalog.
-- Follow pagination when `links.next` is present.
-
-## Why This Approach
-
-- `/v1/events/{event_id}/tickets` returns product details, but not sold counts.
-- `/v1/events/{event_id}/order-statistics` returns totals, but not per-ticket breakdowns.
-- `/v1/orders/{order_id}/tickets` is useful for inspection, but not enough by itself for reliable sold quantities.
-- On the verified sample event `3048`, the attendee-derived completed count matched `order-statistics.tickets.completed` exactly (`1853`).
-
-## Ticket Fields To Carry Forward
-
-- old ticket id
-- ticket name
-- price
-- description
-- ticket type
-- quantity
-- sales start
-- sales end
-- order limits
-- visibility and check-in flags
-
-## Implementation Once New Endpoints Exist
-
-- Add product creation calls after each event is created in the new system.
-- Build a mapping from old ticket id to new product id.
-- Create products before any future sold-order or attendee migration.
-- Keep a per-event summary of created products and sold counts.
-- Validate that the sum of migrated completed ticket counts matches the old `order-statistics` completed total.
-
-## Open Items For The Next Step
-
-- Add the new-system endpoints for product creation.
-- Define the payload mapping from old ticket fields to the new product schema.
-- Decide whether non-completed states (`expired`, `cancelled`, etc.) should also be stored for audit purposes.
-
-
-## Endpoints in the new system to be used for this migration
-
-`/api/v1/organizers/legacy/events/<event-slug>/products/` - for creating products in the new system, and later for validating migrated products.
-
-`/api/v1/organizers/legacy/events/<event-slug>/quotas/` - for creating quotas in the new system, for added products.
-
-## Sample Body for endpoints
-
-For `/api/v1/organizers/legacy/events/<event-slug>/products/`:
+- the old event returns the info in these fields 
 ```json
 {
-  "name": {"en": "Standard ticket"},
-  "default_price": "23.00"
-}
-```
-
-this would give a response like:
-```json
-{
-    "id": 44,
-    "category": null,
-    "name": {
-        "en": "Standarden ticket"
+    "data": {
+        "type": "event",
+        "attributes": {
+            "is-demoted": false,
+            "stream-loop": false,
+            "chat-room-name": "FOSSASIA-Summit-2026-88882f3e",
+            "ticket-url": null,
+            "privacy": "public",
+            "is-sponsors-enabled": true,
+            "latitude": 0.0,
+            "paypal-email": "office@fossasia.org",
+            "location-name": "True Digital Park West, Soi Punnawithi 4, Bang Chak Subdistrict, Phra Khanong District, Bangkok, 10260, Thailand",
+            "pending-order-sales": null,
+            "large-image-url": "https://api.eventyay.com/static/media/events/3997/large/QzhncEpVOF/f78a0223-78a7-4835-a2e4-451c7571f61d.jpg",
+            "completed-order-sales": null,
+            "placed-order-sales": null,
+            "is-chat-enabled": false,
+            "is-sessions-speakers-enabled": true,
+            "can-pay-by-invoice": false,
+            "longitude": 0.0,
+            "is-promoted": true,
+            "is-cfs-enabled": true,
+            "code-of-conduct": null,
+            "is-donation-enabled": false,
+            "after-order-message": "",
+            "can-pay-by-bank": false,
+            "external-event-url": null,
+            "is-ticket-form-enabled": true,
+            "payment-currency": "THB",
+            "is-featured": true,
+            "is-stripe-linked": true,
+            "is-badges-enabled": false,
+            "icon-image-url": "https://api.eventyay.com/static/media/events/3997/icon/a2FINGcySF/f407728f-9207-4d9e-9e2d-30710d47d0db.jpg",
+            "xcal-url": "https://api.eventyay.com/static/media/exports/3997/xcal/KzI3Q0RmK1/xcal.xcs",
+            "is-document-enabled": false,
+            "can-pay-by-omise": false,
+            "deleted-at": null,
+            "is-map-shown": true,
+            "state": "published",
+            "cheque-details": null,
+            "online": true,
+            "is-videoroom-enabled": true,
+            "is-oneclick-signup-enabled": false,
+            "timezone": "Asia/Bangkok",
+            "can-pay-by-paypal": false,
+            "can-pay-onsite": false,
+            "owner-description": null,
+            "pending-order-tickets": null,
+            "can-pay-by-cheque": false,
+            "is-billing-info-mandatory": false,
+            "show-remaining-tickets": false,
+            "pentabarf-url": "https://api.eventyay.com/static/media/exports/3997/pentabarf/Y0tpLzcxRm/pentabarf.xml",
+            "owner-name": null,
+            "is-tax-enabled": false,
+            "placed-order-tickets": null,
+            "ical-url": "https://api.eventyay.com/static/media/exports/3997/ical/MWU4NUNyRH/event_ical.ics",
+            "refund-policy": "At FOSSASIA, we strive to offer an affordable and valuable event experience for all participants. As a non-profit, community-driven event, we carefully allocate resources to ensure a high-quality summit while keeping ticket prices accessible. All ticket sales for the FOSSASIA Summit are final. Once a ticket has been purchased, it is non-refundable and non-transferable. By purchasing a ticket, attendees agree to the terms of this refund policy.",
+            "searchable-location-name": null,
+            "onsite-details": null,
+            "starts-at": "2026-03-08T02:00:00+00:00",
+            "can-pay-by-alipay": false,
+            "stream-autoplay": false,
+            "name": "FOSSASIA Summit 2026",
+            "ends-at": "2026-03-10T12:30:00+00:00",
+            "description": "<p>FOSSASIA Summit 2026 returns to Bangkok on 8–10 March 2026 at True Digital Park, bringing together <strong>200+ international speakers</strong> across key tracks including <strong>AI &amp; Data, PostgreSQL (PGDay), Cloud &amp; DevOps, Cybersecurity &amp; Privacy, Web &amp; Mobile Development, Operating Systems, and Open Hardware</strong>. Participants will gain practical, production-ready insights into building real-world AI applications, running PostgreSQL at scale, modern DevOps and observability with Kubernetes, and safeguarding security and privacy in the age of AI.</p><p><strong>COMMUNITY DAY - 8 MARCH</strong></p><p>Join the free Community Day on March 8 ahead of the main summit, featuring Open Source 101 and practical tools to help you start or deepen your developer journey.</p><p><strong>FOSSASIA PGDAY - 10 MARCH</strong></p>FOSSASIA PGDay is a co-located event focused on PostgreSQL and its ecosystem, covering performance, HA/DR, backups, security, and operations. A standard FOSSASIA Summit ticket includes PGDay access. Learn more at <a href=\"https://summit.fossasia.org/pgday\" rel=\"nofollow\" target=\"_blank\">https://summit.fossasia.org/pgday</a><p></p><p></p><p><strong>FOSSASIA HACKATHON - 10 MARCH</strong></p><p>Join our one-day hackathon, powered by ExpressVPN to build privacy-first solutions for digital safety for young users. Grand prize: 29,999 THB (~USD 1,000)<br>Learn more: <a href=\"https://next.eventyay.com/fossasia/hackathon2026\" rel=\"nofollow\" target=\"_blank\">https://next.eventyay.com/fossasia/hackathon2026</a></p><p></p>",
+            "invoice-details": null,
+            "payment-country": "Singapore",
+            "document-links": [
+                {
+                    "link": "",
+                    "name": ""
+                }
+            ],
+            "bank-details": null,
+            "original-image-url": "https://api.eventyay.com/static/media/temp/images/a70d7d4e-1abc-4a5b-aea0-5969d879d782/elNzUER1c1/046b7f8a-15e9-4b0c-a003-d37289b28083.jpeg",
+            "thumbnail-image-url": "https://api.eventyay.com/static/media/events/3997/thumbnail/TlJvV0R5Sl/65aa3ced-6ce0-44e4-bb0b-6db50026f8d3.jpg",
+            "identifier": "88882f3e",
+            "schedule-published-on": "2026-02-04T20:33:28.469000+00:00",
+            "is-announced": false,
+            "completed-order-tickets": null,
+            "can-pay-by-paytm": false,
+            "has-owner-info": false,
+            "can-pay-by-stripe": true,
+            "created-at": "2025-05-04T17:05:26.160616+00:00",
+            "logo-url": "https://api.eventyay.com/static/media/temp/images/5478e748-fd6a-426b-98cc-21934c20ad08/UitOSnRLWF/fd95fa20-971c-4232-8703-1638ba4b292c.png",
+            "public-stream-link": ""
+        },
+        "relationships": {
+            "orders": {
+                "links": {
+                    "self": "/v1/events/3997/relationships/orders",
+                    "related": "/v1/events/3997/orders"
+                }
+            },
+            "roles": {
+                "links": {
+                    "self": "/v1/events/3997/relationships/roles",
+                    "related": "/v1/events/3997/users-events-roles"
+                }
+            },
+            "speakers": {
+                "links": {
+                    "self": "/v1/events/3997/relationships/speakers",
+                    "related": "/v1/events/3997/speakers"
+                }
+            },
+            "event-copyright": {
+                "links": {
+                    "self": "/v1/events/3997/relationships/event-copyright",
+                    "related": "/v1/events/3997/event-copyright"
+                }
+            },
+            "session-favourites": {
+                "links": {
+                    "related": "/v1/events/3997/user-favourite-sessions"
+                }
+            },
+            "role-invites": {
+                "links": {
+                    "self": "/v1/events/3997/relationships/role-invites",
+                    "related": "/v1/events/3997/role-invites"
+                }
+            },
+            "event-topic": {
+                "links": {
+                    "self": "/v1/events/3997/relationships/event-topic",
+                    "related": "/v1/events/3997/event-topic"
+                }
+            },
+            "faqs": {
+                "links": {
+                    "self": "/v1/events/3997/relationships/faqs",
+                    "related": "/v1/events/3997/faqs"
+                }
+            },
+            "social-links": {
+                "links": {
+                    "self": "/v1/events/3997/relationships/social-links",
+                    "related": "/v1/events/3997/social-links"
+                }
+            },
+            "attendees": {
+                "links": {
+                    "self": "/v1/events/3997/relationships/attendees",
+                    "related": "/v1/events/3997/attendees"
+                }
+            },
+            "microlocations": {
+                "links": {
+                    "self": "/v1/events/3997/relationships/microlocations",
+                    "related": "/v1/events/3997/microlocations"
+                }
+            },
+            "order-statistics": {
+                "links": {
+                    "self": "/v1/events/3997/relationships/order-statistics",
+                    "related": "/v1/events/3997/order-statistics"
+                }
+            },
+            "coorganizers": {
+                "links": {
+                    "self": "/v1/events/3997/relationships/coorganizers",
+                    "related": "/v1/users"
+                }
+            },
+            "tax": {
+                "links": {
+                    "self": "/v1/events/3997/relationships/tax",
+                    "related": "/v1/events/3997/tax"
+                }
+            },
+            "registrars": {
+                "links": {
+                    "self": "/v1/events/3997/relationships/registrars",
+                    "related": "/v1/users"
+                }
+            },
+            "general-statistics": {
+                "links": {
+                    "self": "/v1/events/3997/relationships/general-statistics",
+                    "related": "/v1/events/3997/general-statistics"
+                }
+            },
+            "discount-codes": {
+                "links": {
+                    "self": "/v1/events/3997/relationships/discount-codes",
+                    "related": "/v1/events/3997/discount-codes"
+                }
+            },
+            "faq-types": {
+                "links": {
+                    "self": "/v1/events/3997/relationships/faq-types",
+                    "related": "/v1/events/3997/faq-types"
+                }
+            },
+            "feedbacks": {
+                "links": {
+                    "self": "/v1/events/3997/relationships/feedbacks",
+                    "related": "/v1/events/3997/feedbacks"
+                }
+            },
+            "sponsors": {
+                "links": {
+                    "self": "/v1/events/3997/relationships/sponsors",
+                    "related": "/v1/events/3997/sponsors"
+                }
+            },
+            "event-type": {
+                "links": {
+                    "self": "/v1/events/3997/relationships/event-type",
+                    "related": "/v1/events/3997/event-type"
+                }
+            },
+            "stripe-authorization": {
+                "links": {
+                    "self": "/v1/stripe-authorizations/3997/relationships/event",
+                    "related": "/v1/events/3997/stripe-authorization"
+                }
+            },
+            "tracks": {
+                "links": {
+                    "self": "/v1/events/3997/relationships/tracks",
+                    "related": "/v1/events/3997/tracks"
+                }
+            },
+            "moderators": {
+                "links": {
+                    "self": "/v1/events/3997/relationships/moderators",
+                    "related": "/v1/users"
+                }
+            },
+            "owner": {
+                "links": {
+                    "self": "/v1/events/3997/relationships/owner",
+                    "related": "/v1/events/3997/owner"
+                }
+            },
+            "speakers-call": {
+                "links": {
+                    "self": "/v1/events/3997/relationships/speakers-call",
+                    "related": "/v1/events/3997/speakers-call"
+                }
+            },
+            "organizers": {
+                "links": {
+                    "self": "/v1/events/3997/relationships/organizers",
+                    "related": "/v1/users"
+                }
+            },
+            "event-invoices": {
+                "links": {
+                    "self": "/v1/events/3997/relationships/event-invoices",
+                    "related": "/v1/events/3997/event-invoices"
+                }
+            },
+            "track-organizers": {
+                "links": {
+                    "self": "/v1/events/3997/relationships/track-organizers",
+                    "related": "/v1/users"
+                }
+            },
+            "session-types": {
+                "links": {
+                    "self": "/v1/events/3997/relationships/session-types",
+                    "related": "/v1/events/3997/session-types"
+                }
+            },
+            "tickets": {
+                "links": {
+                    "self": "/v1/events/3997/relationships/tickets",
+                    "related": "/v1/events/3997/tickets"
+                }
+            },
+            "badge-forms": {
+                "links": {
+                    "self": "/v1/events/3997/relationships/badge-forms",
+                    "related": "/v1/events/3997/badge-forms"
+                }
+            },
+            "tags": {
+                "links": {
+                    "self": "/v1/events/3997/relationships/tags",
+                    "related": "/v1/events/3997/tags"
+                }
+            },
+            "video-stream": {
+                "links": {
+                    "self": "/v1/video-streams/3997/relationships/event",
+                    "related": "/v1/events/3997/video-stream"
+                }
+            },
+            "station": {
+                "links": {
+                    "self": "/v1/events/3997/relationships/station",
+                    "related": "/v1/events/3997/stations"
+                }
+            },
+            "group": {
+                "links": {
+                    "self": "/v1/events/3997/relationships/group",
+                    "related": "/v1/events/3997/group"
+                }
+            },
+            "custom-forms": {
+                "links": {
+                    "self": "/v1/events/3997/relationships/custom-forms",
+                    "related": "/v1/events/3997/custom-forms"
+                }
+            },
+            "speaker-invites": {
+                "links": {
+                    "self": "/v1/events/3997/relationships/speaker-invites",
+                    "related": "/v1/events/3997/speaker-invites"
+                }
+            },
+            "ticket-tags": {
+                "links": {
+                    "self": "/v1/events/3997/relationships/ticket-tags",
+                    "related": "/v1/events/3997/ticket-tags"
+                }
+            },
+            "access-codes": {
+                "links": {
+                    "self": "/v1/events/3997/relationships/access-codes",
+                    "related": "/v1/events/3997/access-codes"
+                }
+            },
+            "sessions": {
+                "links": {
+                    "self": "/v1/events/3997/relationships/sessions",
+                    "related": "/v1/events/3997/sessions"
+                }
+            },
+            "exhibitors": {
+                "links": {
+                    "self": "/v1/events/3997/relationships/exhibitors",
+                    "related": "/v1/events/3997/exhibitors"
+                }
+            },
+            "event-sub-topic": {
+                "links": {
+                    "self": "/v1/events/3997/relationships/event-sub-topic",
+                    "related": "/v1/events/3997/event-sub-topic"
+                }
+            }
+        },
+        "id": "3997",
+        "links": {
+            "self": "/v1/events/3997"
+        }
     },
-    "internal_name": null,
-    "active": true,
-    "sales_channels": [
-        "web"
-    ],
-    "description": null,
-    "default_price": "23.00",
-    "free_price": false,
-    "tax_rate": "0.00",
-    "tax_rule": null,
-    "admission": false,
-    "position": 0,
-    "picture": null,
-    "available_from": null,
-    "available_until": null,
-    "require_voucher": false,
-    "hide_without_voucher": false,
-    "allow_cancel": true,
-    "require_bundling": false,
-    "min_per_order": null,
-    "max_per_order": null,
-    "checkin_attention": false,
-    "has_variations": false,
-    "variations": [],
-    "addons": [],
-    "bundles": [],
-    "original_price": null,
-    "require_approval": false,
-    "generate_tickets": null,
-    "show_quota_left": null,
-    "hidden_if_available": null,
-    "allow_waitinglist": true,
-    "issue_giftcard": false,
-    "meta_data": {}
-}
-```
-please note that the `id` field in the response is required for the next step of creating quotas.
-
-For `/api/v1/organizers/legacy/events/<event-slug>/quotas/`:
-```json
-{
-  "name": "Ticket Quota",
-  "products": [44]
+    "links": {
+        "self": "/v1/events/3997"
+    },
+    "jsonapi": {
+        "version": "1.0"
+    }
 }
 ```
 
-and the response would be:
-```json
-{
-    "id": 18,
-    "name": "Ticket Quota",
-    "size": null,
-    "products": [
-        44
-    ],
-    "variations": [],
-    "subevent": null,
-    "closed": false,
-    "close_when_sold_out": false,
-    "release_after_exit": false
-}
-```
+## sending frontpage text and images
+
+- frontpage_text: public text shown on the presale page - use the `description` field from the old event
+- event_logo_image: event logo URL - use the `original-image-url` field from the old event
+- logo_image: header/background image URL - use the `logo-url` field from the old event

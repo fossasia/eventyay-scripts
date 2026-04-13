@@ -1,3 +1,4 @@
+import argparse
 from collections import Counter
 from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
@@ -7,6 +8,7 @@ from time import sleep
 from urllib.parse import urljoin
 
 import requests
+from requests.adapters import HTTPAdapter
 
 
 def load_dotenv(file_name=".env"):
@@ -70,8 +72,16 @@ timezone_aliases = {
 }
 
 session = requests.Session()
+new_system_session = requests.Session()
+new_system_session.mount(
+    "http://",
+    HTTPAdapter(pool_connections=1, pool_maxsize=1, pool_block=True),
+)
 valid_timezones = None
 ENABLE_TICKET_SALES_VALIDATION = False
+NEW_SYSTEM_WRITE_DELAY_SECONDS = float(
+    os.environ.get("OPENEVENT_WRITE_DELAY_SECONDS", "0.1")
+)
 
 
 def get_old_api_headers():
@@ -86,7 +96,6 @@ def get_old_api_headers():
 
 def get_new_system_headers():
     request_headers = dict(new_system_headers)
-    request_headers["Connection"] = "close"
     token = os.environ.get("OPENEVENT_AUTH_TOKEN")
     if token:
         token_value = format_env_token(token, "Token ")
@@ -120,10 +129,14 @@ def build_next_url(base_url, path):
 
 def request_with_retry(method, endpoint, request_headers, retries=3, **kwargs):
     last_error = None
+    request_method = str(method).upper()
+    active_session = (
+        new_system_session if endpoint.startswith(new_system_url) else session
+    )
 
     for attempt in range(retries):
         try:
-            response = session.request(
+            response = active_session.request(
                 method,
                 endpoint,
                 headers=request_headers,
@@ -133,20 +146,49 @@ def request_with_retry(method, endpoint, request_headers, retries=3, **kwargs):
         except requests.RequestException as error:
             last_error = error
             if attempt == retries - 1:
+                print(
+                    f"request failed: {request_method} {endpoint} - {error}",
+                    flush=True,
+                )
                 raise
-            sleep(2**attempt)
+
+            retry_delay = 2**attempt
+            print(
+                f"request error: {request_method} {endpoint} - {error}; "
+                f"retrying in {retry_delay}s ({attempt + 1}/{retries})",
+                flush=True,
+            )
+            sleep(retry_delay)
             continue
 
         if response.status_code < 500:
+            if (
+                endpoint.startswith(new_system_url)
+                and request_method in {"POST", "PATCH", "PUT", "DELETE"}
+                and NEW_SYSTEM_WRITE_DELAY_SECONDS > 0
+            ):
+                sleep(NEW_SYSTEM_WRITE_DELAY_SECONDS)
             return response
 
         last_error = requests.HTTPError(response=response)
         if attempt == retries - 1:
+            print(
+                f"server error: {request_method} {endpoint} - "
+                f"{response.status_code} {get_response_message(response)}",
+                flush=True,
+            )
             return response
 
         retry_delay = 2**attempt
         if "too many clients already" in response.text.lower():
             retry_delay = 130
+
+        print(
+            f"server error: {request_method} {endpoint} - "
+            f"{response.status_code} {get_response_message(response)}; "
+            f"retrying in {retry_delay}s ({attempt + 1}/{retries})",
+            flush=True,
+        )
 
         sleep(retry_delay)
 
@@ -345,6 +387,9 @@ def build_event_details(attributes, event_id):
         "timezone": normalize_timezone(source_timezone),
         "latitude": attributes.get("latitude"),
         "longitude": attributes.get("longitude"),
+        "frontpage_text": clean_string(attributes.get("description")),
+        "header_image_url": clean_string(attributes.get("original-image-url")),
+        "logo_image_url": clean_string(attributes.get("logo-url")),
     }
 
     return details
@@ -398,6 +443,26 @@ def build_event_payload(details, order_count):
     if latitude not in (None, "") and longitude not in (None, ""):
         payload["geo_lat"] = latitude
         payload["geo_lon"] = longitude
+
+    return payload
+
+
+def build_event_content_payload(details):
+    payload = {}
+
+    frontpage_text = build_translated_field(details.get("frontpage_text", ""))
+    if frontpage_text:
+        payload["frontpage_text"] = frontpage_text
+
+    # In the new system, `logo_image` is the header image and
+    # `event_logo_image` is the event logo shown in the presale header.
+    header_image_url = clean_string(details.get("header_image_url"))
+    if header_image_url:
+        payload["logo_image"] = header_image_url
+
+    logo_image_url = clean_string(details.get("logo_image_url"))
+    if logo_image_url:
+        payload["event_logo_image"] = logo_image_url
 
     return payload
 
@@ -638,6 +703,14 @@ def create_event(payload):
     return fetch_new_system_json(new_system_url, method="POST", payload=payload)
 
 
+def update_event_settings(event_slug, payload):
+    return fetch_new_system_json(
+        build_new_system_url(event_slug, "settings"),
+        method="PATCH",
+        payload=payload,
+    )
+
+
 def create_product(event_slug, payload):
     return fetch_new_system_json(
         build_new_system_url(event_slug, "products"),
@@ -773,7 +846,7 @@ def migrate_products_for_event(details):
     return summary
 
 
-def migrate_events_with_more_than_ten_orders():
+def migrate_events_with_more_than_ten_orders(limit=None):
     event_order_counts, sample_positions = get_order_counts()
     existing_events = get_existing_events()
 
@@ -782,6 +855,8 @@ def migrate_events_with_more_than_ten_orders():
         "events_created": 0,
         "events_existing": 0,
         "events_failed": 0,
+        "events_updated": 0,
+        "event_updates_failed": 0,
         "events_skipped": 0,
         "skipped_test_events": 0,
         "products_created": 0,
@@ -796,6 +871,13 @@ def migrate_events_with_more_than_ten_orders():
     for event_id, order_count in event_order_counts.items():
         if order_count > 10:
             qualifying_events.append((event_id, order_count))
+
+    total_qualifying_events = len(qualifying_events)
+    if limit is not None:
+        qualifying_events = qualifying_events[:limit]
+        print(
+            f"Test mode enabled: processing {len(qualifying_events)} of {total_qualifying_events} qualifying events"
+        )
 
     for event_id, order_count in qualifying_events:
         details = get_event_details(event_id, sample_positions[event_id])
@@ -814,6 +896,8 @@ def migrate_events_with_more_than_ten_orders():
             summary["events_skipped"] += 1
             print(f"skipped event: {details['slug']} ({details['name']}) - {error}")
             continue
+
+        event_content_payload = build_event_content_payload(details)
 
         event_exists = details["slug"] in existing_events
         if event_exists:
@@ -841,6 +925,21 @@ def migrate_events_with_more_than_ten_orders():
                     f"{event_response.status_code} {get_response_message(event_response)}"
                 )
                 continue
+
+        if event_content_payload:
+            event_update_response = update_event_settings(
+                details["slug"], event_content_payload
+            )
+            if event_update_response.status_code in (200, 202, 204):
+                summary["events_updated"] += 1
+                print(f"updated event settings: {details['slug']} ({details['name']})")
+            else:
+                summary["event_updates_failed"] += 1
+                print(
+                    f"warning: failed to update event settings for {details['slug']} "
+                    f"({details['name']}) - {event_update_response.status_code} "
+                    f"{get_response_message(event_update_response)}"
+                )
 
         product_summary = migrate_products_for_event(details)
         for key in (
@@ -875,6 +974,8 @@ def migrate_events_with_more_than_ten_orders():
 
     print(f"Created events: {summary['events_created']}")
     print(f"Existing events: {summary['events_existing']}")
+    print(f"Updated events: {summary['events_updated']}")
+    print(f"Failed event updates: {summary['event_updates_failed']}")
     print(f"Skipped events: {summary['events_skipped']}")
     print(f"Skipped test events: {summary['skipped_test_events']}")
     print(f"Failed events: {summary['events_failed']}")
@@ -885,8 +986,22 @@ def migrate_events_with_more_than_ten_orders():
     print(f"Existing quotas: {summary['quotas_existing']}")
     print(f"Failed quotas: {summary['quotas_failed']}")
     print(f"Validation mismatches: {summary['validation_mismatches']}")
-    print(f"Total qualifying events: {len(qualifying_events)}")
+    print(f"Processed qualifying events: {len(qualifying_events)}")
+    print(f"Total qualifying events: {total_qualifying_events}")
+
+
+def parse_args():
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "-test",
+        "--test",
+        action="store_true",
+        dest="test_mode",
+        help="Run the migration only for the first 50 qualifying events.",
+    )
+    return parser.parse_args()
 
 
 if __name__ == "__main__":
-    migrate_events_with_more_than_ten_orders()
+    args = parse_args()
+    migrate_events_with_more_than_ten_orders(limit=50 if args.test_mode else None)
