@@ -14,6 +14,7 @@
 # Old System
 - Base URL: `https://api.eventyay.com/v1`
 - Auth env var: `EVENTYAY_JWT`
+- API docs for the old system are at `./old-api-docs/blueprint/`
 - Event details come from `/events/{id}` with a fallback through `/orders?page[size]=1&include=event&page[number]=...` for deleted legacy events.
 - Ticket catalog comes from `/events/{id}/tickets`.
 - Some legacy events return `404` on `/events/{id}/tickets`; the script warns and skips product import for those events.
